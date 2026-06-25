@@ -338,11 +338,12 @@
     <div class="page-title" id="form-title">Novo Trade</div>
 
     <!-- Preview em tempo real -->
-    <div class="result-preview">
+    <div class="result-preview" style="grid-template-columns:repeat(5,1fr)">
       <div class="rp-item"><div class="rp-label">Resultado (pts)</div><div class="rp-val" id="pv-pts">—</div></div>
-      <div class="rp-item"><div class="rp-label">Resultado (R$)</div> <div class="rp-val" id="pv-brl">—</div></div>
-      <div class="rp-item"><div class="rp-label">Gain / Loss</div>    <div class="rp-val" id="pv-gl">—</div></div>
-      <div class="rp-item"><div class="rp-label">RR</div>             <div class="rp-val" id="pv-rr">—</div></div>
+      <div class="rp-item"><div class="rp-label">Bruto (R$)</div>     <div class="rp-val" id="pv-brl" style="font-size:14px;opacity:.7">—</div></div>
+      <div class="rp-item"><div class="rp-label">Custo (R$)</div>     <div class="rp-val" id="pv-custo" style="font-size:14px;color:var(--loss)">—</div></div>
+      <div class="rp-item"><div class="rp-label">Líquido (R$)</div>   <div class="rp-val" id="pv-net">—</div></div>
+      <div class="rp-item"><div class="rp-label">Resultado · RR</div> <div class="rp-val" id="pv-gl" style="font-size:14px">—</div><div style="font-size:11px;color:var(--muted);margin-top:2px" id="pv-rr">—</div></div>
     </div>
 
     <!-- Identificação -->
@@ -666,6 +667,15 @@
 const SK      = 'diario_trade';
 const SK_CFG  = 'diario_trade_cfg';
 const PT_BRL  = 0.20;   // 1 ponto WIN = R$ 0,20 por contrato
+const CUSTO_CT = 0.50;  // custo operacional por contrato (R$ 5,00 / 10 contratos)
+
+// Retorna custo, resultado líquido e classificação (Gain/Loss/Empate) baseados em custo
+function tNet(t) {
+  const custo = t.custo ?? (t.cont * CUSTO_CT);
+  const net   = (t.brl !== null && t.brl !== undefined) ? t.brl - custo : null;
+  const res   = net !== null ? (net > 0 ? 'Gain' : net < 0 ? 'Loss' : 'Empate') : null;
+  return { custo, net, res };
+}
 
 const DEF_SETUPS = ['Rompimento','Pullback','Reversão','Médias','Price Action','Outro'];
 const DEF_ATIVOS = ['WIN','WDO'];
@@ -746,29 +756,37 @@ function calcPreview() {
   const dir  = document.getElementById('f-direcao').value;
   const slP  = parseFloat(document.getElementById('f-slPlan').value)    || 0;
 
-  let pts = 0;
-  if (px1 && px2) pts = dir === 'Comprado' ? px2 - px1 : px1 - px2;
-
-  const brl  = pts * PT_BRL * cont;
-  const gl   = pts > 0 ? 'Gain' : pts < 0 ? 'Loss' : (px1 && px2 ? 'Empate' : '—');
-  const rr   = slP > 0 && pts !== 0 ? (Math.abs(pts / slP)).toFixed(2) + 'R' : '—';
-
   const set = (id, txt, color) => {
     const el = document.getElementById(id);
+    if (!el) return;
     el.textContent = txt;
     el.style.color = color;
   };
+  const c = v => v > 0 ? 'var(--gain)' : v < 0 ? 'var(--loss)' : 'var(--text)';
 
-  const c = (v) => v > 0 ? 'var(--gain)' : v < 0 ? 'var(--loss)' : 'var(--text)';
-
-  if (px1 && px2) {
-    set('pv-pts', (pts >= 0 ? '+' : '') + pts.toFixed(0) + ' pts', c(pts));
-    set('pv-brl', 'R$ ' + (brl >= 0 ? '+' : '') + brl.toFixed(2),  c(brl));
-    set('pv-gl',  gl, gl === 'Gain' ? 'var(--gain)' : gl === 'Loss' ? 'var(--loss)' : 'var(--warn)');
-    set('pv-rr',  rr, 'var(--text)');
-  } else {
-    ['pv-pts','pv-brl','pv-gl','pv-rr'].forEach(id => set(id, '—', 'var(--text)'));
+  if (!(px1 && px2)) {
+    set('pv-pts',   '—', 'var(--text)');
+    set('pv-brl',   '—', 'var(--muted)');
+    set('pv-custo', '—', 'var(--loss)');
+    set('pv-net',   '—', 'var(--text)');
+    set('pv-gl',    '—', 'var(--text)');
+    set('pv-rr',    '—', 'var(--muted)');
+    return;
   }
+
+  const pts   = dir === 'Comprado' ? px2 - px1 : px1 - px2;
+  const brl   = pts * PT_BRL * cont;
+  const custo = cont * CUSTO_CT;
+  const net   = brl - custo;
+  const gl    = net > 0 ? 'Gain' : net < 0 ? 'Loss' : 'Empate';
+  const rr    = slP > 0 && pts !== 0 ? (Math.abs(pts / slP)).toFixed(2) + 'R' : '—';
+
+  set('pv-pts',   (pts >= 0 ? '+' : '') + pts.toFixed(0) + ' pts',          c(pts));
+  set('pv-brl',   'R$ ' + (brl >= 0 ? '+' : '') + brl.toFixed(2),           c(brl));
+  set('pv-custo', '- R$ ' + custo.toFixed(2),                                'var(--loss)');
+  set('pv-net',   'R$ ' + (net >= 0 ? '+' : '') + net.toFixed(2),            c(net));
+  set('pv-gl',    gl,  gl === 'Gain' ? 'var(--gain)' : gl === 'Loss' ? 'var(--loss)' : 'var(--warn)');
+  set('pv-rr',    rr,  'var(--muted)');
 }
 
 ['f-pxEntrada','f-pxSaida','f-contratos','f-direcao','f-slPlan'].forEach(id => {
@@ -809,11 +827,13 @@ function saveTrade() {
   const tpP  = parseFloat(document.getElementById('f-tpPlan').value)   || null;
   const tpX  = parseFloat(document.getElementById('f-tpExec').value)   || null;
 
-  let pts = null, brl = null, res = null, rr = null;
+  let pts = null, brl = null, custo = null, res = null, rr = null;
   if (px2 !== null) {
-    pts = dir === 'Comprado' ? px2 - px1 : px1 - px2;
-    brl = pts * PT_BRL * cont;
-    res = pts > 0 ? 'Gain' : pts < 0 ? 'Loss' : 'Empate';
+    pts   = dir === 'Comprado' ? px2 - px1 : px1 - px2;
+    brl   = pts * PT_BRL * cont;
+    custo = cont * CUSTO_CT;
+    const net = brl - custo;
+    res   = net > 0 ? 'Gain' : net < 0 ? 'Loss' : 'Empate';
     if (slP && slP > 0) rr = parseFloat((Math.abs(pts / slP)).toFixed(2));
   }
 
@@ -823,7 +843,7 @@ function saveTrade() {
     dtEntrada: dtE,
     dtSaida:   document.getElementById('f-dtSaida').value || null,
     ativo, dir, cont, setup, px1, px2, slP, slX, tpP, tpX,
-    pts, brl, res, rr,
+    pts, brl, custo, res, rr,
     emoAntes:   { est: emo.antes.est,   tags: [...emo.antes.tags]   },
     emoDurante: { est: emo.durante.est, tags: [...emo.durante.tags] },
     emoDepois:  { est: emo.depois.est,  tags: [...emo.depois.tags]  },
@@ -948,7 +968,7 @@ function renderHistory() {
   if (ini)   list = list.filter(t => t.dtEntrada >= ini);
   if (fim)   list = list.filter(t => t.dtEntrada <= fim + 'T23:59');
   if (ativo) list = list.filter(t => t.ativo === ativo);
-  if (res)   list = list.filter(t => t.res === res);
+  if (res)   list = list.filter(t => tNet(t).res === res);
   if (setup) list = list.filter(t => t.setup === setup);
 
   const body  = document.getElementById('hist-body');
@@ -958,10 +978,11 @@ function renderHistory() {
   empty.style.display = 'none';
 
   body.innerHTML = list.map(t => {
-    const bc    = t.res === 'Gain' ? 'bg-gain' : t.res === 'Loss' ? 'bg-loss' : 'bg-emp';
-    const pc    = t.pts > 0 ? 'color:var(--gain)' : t.pts < 0 ? 'color:var(--loss)' : '';
-    const pts   = t.pts  !== null ? (t.pts  >= 0 ? '+' : '') + t.pts.toFixed(0) : '—';
-    const brl   = t.brl  !== null ? 'R$' + (t.brl >= 0 ? '+' : '') + t.brl.toFixed(2) : '—';
+    const { net, custo: ct, res: nr } = tNet(t);
+    const bc    = nr === 'Gain' ? 'bg-gain' : nr === 'Loss' ? 'bg-loss' : nr === 'Empate' ? 'bg-emp' : '';
+    const pc    = net > 0 ? 'color:var(--gain)' : net < 0 ? 'color:var(--loss)' : '';
+    const pts   = t.pts !== null ? (t.pts >= 0 ? '+' : '') + t.pts.toFixed(0) : '—';
+    const netTxt = net !== null ? 'R$' + (net >= 0 ? '+' : '') + net.toFixed(2) : '—';
     const dt    = (t.dtEntrada || '').replace('T',' ').slice(0, 16);
     const emoIc = t.emoAntes?.est ? emoIcon(t.emoAntes.est) : '—';
 
@@ -973,8 +994,8 @@ function renderHistory() {
       <td>${t.px1 !== null ? t.px1.toLocaleString('pt-BR') : '—'}</td>
       <td>${t.px2 !== null ? t.px2.toLocaleString('pt-BR') : '—'}</td>
       <td style="${pc}">${pts}</td>
-      <td style="${pc}">${brl}</td>
-      <td>${t.res ? `<span class="badge ${bc}">${t.res}</span>` : '—'}</td>
+      <td style="${pc}" title="Bruto: R$${t.brl !== null ? (t.brl >= 0 ? '+' : '') + t.brl.toFixed(2) : '—'} | Custo: -R$${ct.toFixed(2)}">${netTxt} 💡</td>
+      <td>${nr ? `<span class="badge ${bc}">${nr}</span>` : '—'}</td>
       <td>${t.rr ? t.rr + 'R' : '—'}</td>
       <td>${emoIc}</td>
       <td>
@@ -997,8 +1018,9 @@ function showDetail(id) {
   const t = trades.find(x => x.id === id);
   if (!t) return;
 
-  const bc  = t.res === 'Gain' ? 'bg-gain' : t.res === 'Loss' ? 'bg-loss' : 'bg-emp';
-  const pc  = t.pts > 0 ? 'color:var(--gain)' : t.pts < 0 ? 'color:var(--loss)' : '';
+  const { net, custo: ct, res: nr } = tNet(t);
+  const bc  = nr === 'Gain' ? 'bg-gain' : nr === 'Loss' ? 'bg-loss' : nr === 'Empate' ? 'bg-emp' : '';
+  const pc  = net > 0 ? 'color:var(--gain)' : net < 0 ? 'color:var(--loss)' : '';
 
   const di = (lbl, val) => `<div class="d-item"><div class="d-label">${lbl}</div><div class="d-val">${val ?? '—'}</div></div>`;
 
@@ -1014,10 +1036,15 @@ function showDetail(id) {
 
   document.getElementById('modal-ttl').textContent = `${t.ativo} · ${(t.dtEntrada||'').slice(0,10)}`;
   document.getElementById('modal-body').innerHTML = `
-    <div style="margin-bottom:14px;padding-bottom:14px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:12px">
-      <span class="badge ${bc}" style="font-size:14px;padding:4px 14px">${t.res || '—'}</span>
-      ${t.brl !== null ? `<span style="font-size:20px;font-weight:700;${pc}">R$ ${t.brl >= 0 ? '+' : ''}${t.brl.toFixed(2)}</span>` : ''}
-      ${t.rr  !== null ? `<span style="font-size:13px;color:var(--muted)">RR ${t.rr}R</span>` : ''}
+    <div style="margin-bottom:14px;padding-bottom:14px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:14px;flex-wrap:wrap">
+      <span class="badge ${bc}" style="font-size:14px;padding:4px 14px">${nr || '—'}</span>
+      ${net !== null ? `<span style="font-size:20px;font-weight:700;${pc}">R$ ${net >= 0 ? '+' : ''}${net.toFixed(2)}</span>` : ''}
+      ${t.brl !== null && ct ? `
+        <span style="font-size:11px;color:var(--muted);display:flex;flex-direction:column;line-height:1.4">
+          <span>Bruto: R$ ${t.brl >= 0 ? '+' : ''}${t.brl.toFixed(2)}</span>
+          <span style="color:var(--loss)">Custo: - R$ ${ct.toFixed(2)}</span>
+        </span>` : ''}
+      ${t.rr !== null ? `<span style="font-size:13px;color:var(--muted)">RR ${t.rr}R</span>` : ''}
     </div>
 
     <div class="sec-title">Identificação</div>
@@ -1065,26 +1092,29 @@ function closeModalDirect() { document.getElementById('modal-bg').classList.remo
 
 // ─── DASHBOARD ─────────────────────────────────────────────────────
 function renderDash() {
-  const done = trades.filter(t => t.res !== null && t.res !== undefined);
-  const gains = done.filter(t => t.res === 'Gain').length;
-  const losss = done.filter(t => t.res === 'Loss').length;
-  const emps  = done.filter(t => t.res === 'Empate').length;
+  const done  = trades.filter(t => t.brl !== null && t.brl !== undefined);
+  const nets  = done.map(t => ({ ...t, _n: tNet(t) }));
+  const gains = nets.filter(t => t._n.res === 'Gain').length;
+  const losss = nets.filter(t => t._n.res === 'Loss').length;
+  const emps  = nets.filter(t => t._n.res === 'Empate').length;
   const wr    = done.length ? ((gains / done.length) * 100).toFixed(1) : 0;
-  const total = done.reduce((s, t) => s + (t.brl || 0), 0);
-  const maxG  = done.filter(t => t.res === 'Gain').reduce((m, t) => Math.max(m, t.brl || 0), 0);
-  const maxL  = done.filter(t => t.res === 'Loss').reduce((m, t) => Math.min(m, t.brl || 0), 0);
+  const total = nets.reduce((s, t) => s + (t._n.net ?? 0), 0);
+  const maxG  = nets.filter(t => t._n.res === 'Gain').reduce((m, t) => Math.max(m, t._n.net ?? 0), 0);
+  const maxL  = nets.filter(t => t._n.res === 'Loss').reduce((m, t) => Math.min(m, t._n.net ?? 0), 0);
   const avgRR = (() => {
     const rrs = done.filter(t => t.rr).map(t => t.rr);
     return rrs.length ? (rrs.reduce((a,b) => a+b, 0) / rrs.length) : 0;
   })();
 
-  // Streak
-  const sorted = [...trades].sort((a,b) => new Date(a.dtEntrada) - new Date(b.dtEntrada));
+  // Streak — baseado em resultado líquido
+  const sorted = [...trades]
+    .filter(t => t.brl !== null && t.brl !== undefined)
+    .sort((a,b) => new Date(a.dtEntrada) - new Date(b.dtEntrada));
   let streak = 0, stType = '';
   if (sorted.length) {
-    stType = sorted[sorted.length - 1].res || '';
+    stType = tNet(sorted[sorted.length - 1]).res || '';
     for (let i = sorted.length - 1; i >= 0; i--) {
-      if (sorted[i].res === stType) streak++; else break;
+      if (tNet(sorted[i]).res === stType) streak++; else break;
     }
   }
 
@@ -1119,7 +1149,7 @@ function drawAcum(done) {
 
   const sorted = [...done].sort((a,b) => new Date(a.dtEntrada) - new Date(b.dtEntrada));
   let acc = 0;
-  const pts = sorted.map(t => { acc += (t.brl || 0); return acc; });
+  const pts = sorted.map(t => { acc += (tNet(t).net ?? 0); return acc; });
 
   const pad = { t: 18, r: 18, b: 38, l: 58 };
   const W = cv.width - pad.l - pad.r;
@@ -1234,7 +1264,7 @@ function drawSetups(done) {
   if (!done.length) { emptyChart(cx, cv.width, cv.height); return; }
 
   const map = {};
-  done.forEach(t => { map[t.setup] = (map[t.setup] || 0) + (t.brl || 0); });
+  done.forEach(t => { map[t.setup] = (map[t.setup] || 0) + (tNet(t).net ?? 0); });
   const entries = Object.entries(map).sort((a,b) => b[1] - a[1]);
 
   const pad = { t: 10, r: 16, b: 56, l: 52 };
@@ -1520,7 +1550,7 @@ function generateInsights(done) {
   // 3. Tag Impulsivo
   const impulsivo = done.filter(t => t.emoAntes?.tags?.includes('Impulsivo'));
   if (impulsivo.length >= 2) {
-    const brl = impulsivo.reduce((s, t) => s + (t.brl || 0), 0);
+    const brl = impulsivo.reduce((s, t) => s + (tNet(t).net ?? 0), 0);
     const wr  = (impulsivo.filter(t => t.res === 'Gain').length / impulsivo.length * 100).toFixed(0);
     insights.push({ type: 'warn', text: `Impulsividade em ${impulsivo.length} trades: WR de ${wr}% e resultado acumulado de R$ ${brl >= 0 ? '+' : ''}${brl.toFixed(2)}. Controle esse gatilho.` });
   }
@@ -1539,7 +1569,7 @@ function generateInsights(done) {
   const naoPlano = done.filter(t => t.plano === 'Não');
   if (naoPlano.length >= 2) {
     const lossRate = (naoPlano.filter(t => t.res === 'Loss').length / naoPlano.length * 100).toFixed(0);
-    const totalBrl = naoPlano.reduce((s, t) => s + (t.brl || 0), 0);
+    const totalBrl = naoPlano.reduce((s, t) => s + (tNet(t).net ?? 0), 0);
     if (parseInt(lossRate) > 50)
       insights.push({ type: 'warn', text: `Nos ${naoPlano.length} trades em que não seguiu o plano, ${lossRate}% foram losses — prejuízo de R$ ${Math.abs(totalBrl).toFixed(2)}. Disciplina tem preço.` });
   }
