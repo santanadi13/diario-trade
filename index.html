@@ -252,6 +252,30 @@
 
     /* ===== SEPARATOR ===== */
     .emo-sep { font-size: 12px; font-weight: 700; color: var(--primary); margin: 14px 0 8px; padding-bottom: 6px; border-bottom: 1px solid var(--border); }
+
+    /* ===== ANÁLISE EMOCIONAL ===== */
+    .emo-metrics { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 12px; margin-bottom: 18px; }
+    .emo-metric  { background: var(--bg); border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; text-align: center; }
+    .emo-metric-val  { font-size: 22px; font-weight: 700; margin: 4px 0 2px; }
+    .emo-metric-lbl  { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; }
+    .emo-metric-sub  { font-size: 11px; margin-top: 2px; }
+
+    .emo-charts-row  { display: grid; grid-template-columns: 2fr 1fr; gap: 14px; margin-bottom: 18px; }
+
+    .insights-list   { display: flex; flex-direction: column; gap: 8px; }
+    .insight-item    { display: flex; gap: 10px; align-items: flex-start; padding: 11px 14px; background: var(--bg); border-radius: 9px; border-left: 3px solid var(--border); font-size: 13px; line-height: 1.55; }
+    .insight-item.warn  { border-left-color: var(--loss); }
+    .insight-item.ok    { border-left-color: var(--gain); }
+    .insight-item.info  { border-left-color: var(--primary); }
+    .insight-item.tip   { border-left-color: var(--warn); }
+
+    .tag-compare     { display: flex; flex-direction: column; gap: 8px; }
+    .tag-row         { display: flex; flex-direction: column; gap: 3px; }
+    .tag-row-label   { font-size: 11px; color: var(--text); display: flex; justify-content: space-between; }
+    .tag-bars        { display: flex; gap: 4px; height: 6px; }
+    .tag-bar         { border-radius: 3px; min-width: 3px; transition: width .3s; }
+
+    .score-ring-wrap { display: flex; flex-direction: column; align-items: center; justify-content: center; }
   </style>
 </head>
 <body>
@@ -293,6 +317,18 @@
       <div class="card">
         <div class="card-title">Performance Emocional (antes × resultado)</div>
         <div id="emo-tbl-wrap" style="overflow-x:auto"></div>
+      </div>
+    </div>
+
+    <!-- Análise Emocional (renderizada por JS) -->
+    <div class="card" id="emo-analysis-card" style="margin-bottom:14px">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
+        <span class="card-title" style="margin-bottom:0">🧠 Análise da Gestão Emocional</span>
+      </div>
+      <div id="emo-analysis-body">
+        <p style="color:var(--muted);text-align:center;padding:30px;font-size:13px">
+          Cadastre trades com dados emocionais para ver a análise.
+        </p>
       </div>
     </div>
   </div>
@@ -1068,6 +1104,7 @@ function renderDash() {
   drawPizza(gains, losss, emps);
   drawSetups(done);
   renderEmoTable(done);
+  renderEmoAnalysis(done);
 }
 
 // ─── GRÁFICO ACUMULADO ─────────────────────────────────────────────
@@ -1283,6 +1320,357 @@ function renderEmoTable(done) {
       <thead><tr><th>Estado</th><th>Total</th><th>Gain</th><th>Loss</th><th>WR</th></tr></thead>
       <tbody>${rows}</tbody>
     </table>`;
+}
+
+// ─── ANÁLISE EMOCIONAL ─────────────────────────────────────────────
+
+/* Calcula score de gestão emocional (0–100) para um trade:
+   - Estado inicial (25 pts): quanto melhor o estado antes, mais pontos
+   - Estabilidade (30 pts):   quanto menor a variação antes→durante→após
+   - Disciplina   (30 pts):   seguiu o plano?
+   - Recuperação  (15 pts):   estado após >= estado antes
+*/
+function calcEmoScore(t) {
+  let score = 0;
+  const a = t.emoAntes?.est, d = t.emoDurante?.est, p = t.emoDepois?.est;
+
+  if (a) score += Math.round((a / 5) * 25);
+
+  const vals = [a, d, p].filter(v => v != null);
+  if (vals.length >= 2) {
+    const variance = Math.max(...vals) - Math.min(...vals);
+    score += Math.round(Math.max(0, (3 - variance) / 3) * 30);
+  } else if (vals.length === 1) {
+    score += 15; // dados parciais → metade da pontuação de estabilidade
+  }
+
+  const planPts = { 'Sim': 30, 'Parcialmente': 15, 'Não': 0 };
+  if (t.plano) score += planPts[t.plano] ?? 0;
+
+  if (a && p) {
+    if (p >= a) score += 15;
+    else score += Math.max(0, 15 - (a - p) * 5);
+  }
+
+  return Math.min(100, Math.round(score));
+}
+
+function scoreLabel(s) {
+  if (s >= 81) return { txt: 'Excelente', color: 'var(--gain)' };
+  if (s >= 61) return { txt: 'Bom',       color: 'var(--primary)' };
+  if (s >= 41) return { txt: 'Regular',   color: 'var(--warn)' };
+  return              { txt: 'Crítico',   color: 'var(--loss)' };
+}
+
+function drawScoreRing(canvasId, score) {
+  const cv = document.getElementById(canvasId);
+  if (!cv) return;
+  const cx = cv.getContext('2d');
+  cv.width = 110; cv.height = 110;
+  const { color } = scoreLabel(score);
+
+  cx.beginPath();
+  cx.arc(55, 55, 40, Math.PI * 0.75, Math.PI * 2.25);
+  cx.strokeStyle = 'var(--border)'; cx.lineWidth = 9; cx.lineCap = 'round';
+  cx.stroke();
+
+  if (score > 0) {
+    const end = Math.PI * 0.75 + (score / 100) * Math.PI * 1.5;
+    cx.beginPath();
+    cx.arc(55, 55, 40, Math.PI * 0.75, end);
+    cx.strokeStyle = color; cx.lineWidth = 9; cx.lineCap = 'round';
+    cx.stroke();
+  }
+
+  cx.fillStyle = '#e2e8f0'; cx.font = 'bold 19px Inter,sans-serif'; cx.textAlign = 'center';
+  cx.fillText(score, 55, 60);
+  cx.fillStyle = color; cx.font = '10px Inter,sans-serif';
+  cx.fillText(scoreLabel(score).txt, 55, 75);
+}
+
+function drawEmoTimeline(done) {
+  const cv = document.getElementById('ch-emo-timeline');
+  if (!cv) return;
+  const cx = cv.getContext('2d');
+  cv.width = cv.offsetWidth || 500; cv.height = 180;
+  cx.clearRect(0, 0, cv.width, cv.height);
+
+  const sorted = [...done]
+    .filter(t => t.emoAntes?.est || t.emoDurante?.est || t.emoDepois?.est)
+    .sort((a, b) => new Date(a.dtEntrada) - new Date(b.dtEntrada));
+
+  if (sorted.length < 2) { emptyChart(cx, cv.width, cv.height); return; }
+
+  const pad = { t: 14, r: 14, b: 28, l: 28 };
+  const W = cv.width - pad.l - pad.r;
+  const H = cv.height - pad.t - pad.b;
+  const xS = W / Math.max(sorted.length - 1, 1);
+  const toX = i => pad.l + i * xS;
+  const toY = v => pad.t + H - ((v - 1) / 4) * H;
+
+  // Grid
+  cx.strokeStyle = '#2d3148'; cx.lineWidth = 1;
+  for (let i = 1; i <= 5; i++) {
+    const y = toY(i);
+    cx.beginPath(); cx.moveTo(pad.l, y); cx.lineTo(pad.l + W, y); cx.stroke();
+    cx.fillStyle = '#718096'; cx.font = '9px Inter,sans-serif'; cx.textAlign = 'right';
+    cx.fillText(i, pad.l - 4, y + 3);
+  }
+
+  const series = [
+    { key: 'emoAntes',   color: '#6c63ff', label: 'Antes' },
+    { key: 'emoDurante', color: '#ffd166', label: 'Durante' },
+    { key: 'emoDepois',  color: '#00c896', label: 'Após' }
+  ];
+
+  series.forEach(({ key, color }) => {
+    const pts = sorted.map((t, i) => ({ i, v: t[key]?.est })).filter(p => p.v != null);
+    if (pts.length < 2) return;
+
+    cx.strokeStyle = color; cx.lineWidth = 2; cx.lineJoin = 'round';
+    cx.setLineDash([]);
+    cx.beginPath();
+    pts.forEach((p, idx) => {
+      idx === 0 ? cx.moveTo(toX(p.i), toY(p.v)) : cx.lineTo(toX(p.i), toY(p.v));
+    });
+    cx.stroke();
+
+    pts.forEach(p => {
+      cx.beginPath(); cx.arc(toX(p.i), toY(p.v), 3, 0, Math.PI * 2);
+      cx.fillStyle = color; cx.fill();
+    });
+  });
+
+  // Legenda
+  let lx = pad.l;
+  series.forEach(({ color, label }) => {
+    cx.fillStyle = color;
+    cx.fillRect(lx, cv.height - 10, 8, 8);
+    cx.fillStyle = '#718096'; cx.font = '10px Inter,sans-serif'; cx.textAlign = 'left';
+    cx.fillText(label, lx + 11, cv.height - 3);
+    lx += 62;
+  });
+}
+
+function buildTagCompare(done) {
+  const gainTags = {}, lossTags = {};
+  done.forEach(t => {
+    (t.emoAntes?.tags || []).forEach(tag => {
+      if (t.res === 'Gain') gainTags[tag] = (gainTags[tag] || 0) + 1;
+      if (t.res === 'Loss') lossTags[tag] = (lossTags[tag] || 0) + 1;
+    });
+  });
+
+  const allTags = [...new Set([...Object.keys(gainTags), ...Object.keys(lossTags)])];
+  if (!allTags.length) return '<p style="color:var(--muted);font-size:12px;text-align:center;padding:20px">Sem tags registradas</p>';
+
+  const maxVal = Math.max(1, ...Object.values(gainTags), ...Object.values(lossTags));
+
+  return `
+    <div style="font-size:11px;color:var(--muted);margin-bottom:8px;text-transform:uppercase;letter-spacing:.05em">
+      Tags: <span style="color:var(--gain)">■</span> Gains &nbsp; <span style="color:var(--loss)">■</span> Losses
+    </div>
+    <div class="tag-compare">
+      ${allTags.sort((a,b) => ((gainTags[b]||0)+(lossTags[b]||0)) - ((gainTags[a]||0)+(lossTags[a]||0))).map(tag => {
+        const g = gainTags[tag] || 0;
+        const l = lossTags[tag] || 0;
+        const gW = Math.round((g / maxVal) * 100);
+        const lW = Math.round((l / maxVal) * 100);
+        return `<div class="tag-row">
+          <div class="tag-row-label">
+            <span>${tag}</span>
+            <span style="color:var(--muted)">${g}G · ${l}L</span>
+          </div>
+          <div class="tag-bars">
+            <div class="tag-bar" style="width:${gW}%;background:var(--gain)"></div>
+            <div class="tag-bar" style="width:${lW}%;background:var(--loss)"></div>
+          </div>
+        </div>`;
+      }).join('')}
+    </div>`;
+}
+
+function generateInsights(done) {
+  const insights = [];
+  const n = done.length;
+
+  if (n < 3) return [{
+    type: 'info',
+    text: 'Cadastre ao menos 3 trades com dados emocionais para gerar análises automáticas.'
+  }];
+
+  // 1. Estado baixo antes → piores resultados
+  const low  = done.filter(t => t.emoAntes?.est != null && t.emoAntes.est <= 2);
+  const high = done.filter(t => t.emoAntes?.est != null && t.emoAntes.est >= 4);
+  if (low.length >= 2 && high.length >= 2) {
+    const wrL = (low.filter(t => t.res === 'Gain').length / low.length * 100).toFixed(0);
+    const wrH = (high.filter(t => t.res === 'Gain').length / high.length * 100).toFixed(0);
+    if (parseInt(wrL) < parseInt(wrH) - 15)
+      insights.push({ type: 'warn', text: `Com estado emocional baixo (≤2) seu WR é ${wrL}% — com estado alto (≥4) sobe para ${wrH}%. Não opere quando estiver mal.` });
+  }
+
+  // 2. Tag Ansioso → losses
+  const ansioso = done.filter(t => t.emoAntes?.tags?.includes('Ansioso'));
+  if (ansioso.length >= 2) {
+    const wr = (ansioso.filter(t => t.res === 'Gain').length / ansioso.length * 100).toFixed(0);
+    if (parseInt(wr) < 45)
+      insights.push({ type: 'warn', text: `Quando opera Ansioso (${ansioso.length} trades), seu win rate cai para ${wr}%. Ansiedade está destruindo resultados.` });
+  }
+
+  // 3. Tag Impulsivo
+  const impulsivo = done.filter(t => t.emoAntes?.tags?.includes('Impulsivo'));
+  if (impulsivo.length >= 2) {
+    const brl = impulsivo.reduce((s, t) => s + (t.brl || 0), 0);
+    const wr  = (impulsivo.filter(t => t.res === 'Gain').length / impulsivo.length * 100).toFixed(0);
+    insights.push({ type: 'warn', text: `Impulsividade em ${impulsivo.length} trades: WR de ${wr}% e resultado acumulado de R$ ${brl >= 0 ? '+' : ''}${brl.toFixed(2)}. Controle esse gatilho.` });
+  }
+
+  // 4. Queda de estado durante a operação
+  const comDurante = done.filter(t => t.emoAntes?.est != null && t.emoDurante?.est != null);
+  if (comDurante.length >= 3) {
+    const avgDrop = comDurante.reduce((s, t) => s + (t.emoDurante.est - t.emoAntes.est), 0) / comDurante.length;
+    if (avgDrop < -0.6)
+      insights.push({ type: 'tip', text: `Seu estado emocional cai em média ${Math.abs(avgDrop).toFixed(1)} ponto(s) durante as operações. Trabalhe técnicas de controle em tempo real (respiração, pausas).` });
+    else if (avgDrop >= 0.4)
+      insights.push({ type: 'ok', text: `Você mantém ou melhora seu estado durante as operações (média +${avgDrop.toFixed(1)} pts). Ótimo controle em tempo real.` });
+  }
+
+  // 5. Disciplina × resultado
+  const naoPlano = done.filter(t => t.plano === 'Não');
+  if (naoPlano.length >= 2) {
+    const lossRate = (naoPlano.filter(t => t.res === 'Loss').length / naoPlano.length * 100).toFixed(0);
+    const totalBrl = naoPlano.reduce((s, t) => s + (t.brl || 0), 0);
+    if (parseInt(lossRate) > 50)
+      insights.push({ type: 'warn', text: `Nos ${naoPlano.length} trades em que não seguiu o plano, ${lossRate}% foram losses — prejuízo de R$ ${Math.abs(totalBrl).toFixed(2)}. Disciplina tem preço.` });
+  }
+
+  // 6. Revenge trading (loss seguido de loss)
+  const sorted = [...done].sort((a, b) => new Date(a.dtEntrada) - new Date(b.dtEntrada));
+  let afterLoss = 0, afterLossLoss = 0;
+  for (let i = 1; i < sorted.length; i++) {
+    if (sorted[i - 1].res === 'Loss') {
+      afterLoss++;
+      if (sorted[i].res === 'Loss') afterLossLoss++;
+    }
+  }
+  if (afterLoss >= 3) {
+    const pct = (afterLossLoss / afterLoss * 100).toFixed(0);
+    if (parseInt(pct) > 55)
+      insights.push({ type: 'warn', text: `Após um loss, ${pct}% do próximo trade também é loss — sinal de revenge trading. Faça uma pausa obrigatória após perdas.` });
+    else if (parseInt(pct) < 35)
+      insights.push({ type: 'ok', text: `Você não demonstra revenge trading (apenas ${pct}% de loss-após-loss). Boa resiliência psicológica.` });
+  }
+
+  // 7. Tag positiva mais correlacionada com gains
+  const gainTags = {};
+  done.filter(t => t.res === 'Gain').forEach(t => {
+    (t.emoAntes?.tags || []).forEach(tag => { gainTags[tag] = (gainTags[tag] || 0) + 1; });
+  });
+  const topGain = Object.entries(gainTags).sort((a, b) => b[1] - a[1])[0];
+  if (topGain && topGain[1] >= 2)
+    insights.push({ type: 'ok', text: `"${topGain[0]}" é a tag mais presente nos seus gains (${topGain[1]}×). Quando estiver assim, confie mais no seu processo.` });
+
+  // 8. Recuperação emocional após operação
+  const comDepois = done.filter(t => t.emoAntes?.est != null && t.emoDepois?.est != null);
+  if (comDepois.length >= 3) {
+    const avgRec = comDepois.reduce((s, t) => s + (t.emoDepois.est - t.emoAntes.est), 0) / comDepois.length;
+    if (avgRec < -0.8)
+      insights.push({ type: 'tip', text: `Após as operações, seu estado piora em média ${Math.abs(avgRec).toFixed(1)} ponto(s). Trading está afetando seu bem-estar — considere rotinas de recuperação.` });
+    else if (avgRec >= 0.5)
+      insights.push({ type: 'ok', text: `Você se recupera bem após as operações (+${avgRec.toFixed(1)} pts em média). Isso indica boa gestão emocional pós-trade.` });
+  }
+
+  if (!insights.length)
+    insights.push({ type: 'ok', text: 'Sua gestão emocional está sólida com os dados atuais. Continue registrando para análises mais precisas.' });
+
+  return insights;
+}
+
+function renderEmoAnalysis(done) {
+  const body = document.getElementById('emo-analysis-body');
+  const withEmo = done.filter(t => t.emoAntes?.est != null);
+
+  if (withEmo.length < 1) {
+    body.innerHTML = '<p style="color:var(--muted);text-align:center;padding:30px;font-size:13px">Cadastre trades com dados emocionais para ver a análise.</p>';
+    return;
+  }
+
+  // Métricas
+  const scores     = withEmo.map(calcEmoScore);
+  const avgScore   = Math.round(scores.reduce((a, b) => a + b, 0) / scores.length);
+  const avgEstAntes = (withEmo.reduce((s, t) => s + (t.emoAntes?.est || 0), 0) / withEmo.length).toFixed(1);
+
+  // Estabilidade: % de trades com variação <= 1
+  const withAll    = done.filter(t => t.emoAntes?.est && t.emoDurante?.est && t.emoDepois?.est);
+  const stable     = withAll.length
+    ? Math.round(withAll.filter(t => (Math.max(t.emoAntes.est, t.emoDurante.est, t.emoDepois.est) - Math.min(t.emoAntes.est, t.emoDurante.est, t.emoDepois.est)) <= 1).length / withAll.length * 100)
+    : null;
+
+  // Disciplina: % seguiu plano
+  const comPlano   = done.filter(t => t.plano);
+  const discPct    = comPlano.length ? Math.round(comPlano.filter(t => t.plano === 'Sim').length / comPlano.length * 100) : null;
+
+  const sl = scoreLabel(avgScore);
+
+  body.innerHTML = `
+    <!-- Métricas topo -->
+    <div class="emo-metrics">
+      <div class="emo-metric">
+        <div class="emo-metric-lbl">Score Médio</div>
+        <canvas id="emo-score-ring" style="margin:4px auto;display:block"></canvas>
+      </div>
+      <div class="emo-metric">
+        <div class="emo-metric-lbl">Estado Médio (antes)</div>
+        <div class="emo-metric-val">${emoIcon(Math.round(parseFloat(avgEstAntes)))} ${avgEstAntes}</div>
+        <div class="emo-metric-sub" style="color:var(--muted)">em 5 pontos</div>
+      </div>
+      ${stable !== null ? `
+      <div class="emo-metric">
+        <div class="emo-metric-lbl">Estabilidade</div>
+        <div class="emo-metric-val" style="color:${stable >= 60 ? 'var(--gain)' : stable >= 40 ? 'var(--warn)' : 'var(--loss)'}">${stable}%</div>
+        <div class="emo-metric-sub" style="color:var(--muted)">trades sem grandes oscilações</div>
+      </div>` : ''}
+      ${discPct !== null ? `
+      <div class="emo-metric">
+        <div class="emo-metric-lbl">Disciplina</div>
+        <div class="emo-metric-val" style="color:${discPct >= 60 ? 'var(--gain)' : discPct >= 40 ? 'var(--warn)' : 'var(--loss)'}">${discPct}%</div>
+        <div class="emo-metric-sub" style="color:var(--muted)">seguiu o plano</div>
+      </div>` : ''}
+      <div class="emo-metric">
+        <div class="emo-metric-lbl">Trades analisados</div>
+        <div class="emo-metric-val">${withEmo.length}</div>
+        <div class="emo-metric-sub" style="color:var(--muted)">com dados emocionais</div>
+      </div>
+    </div>
+
+    <!-- Gráficos -->
+    <div class="emo-charts-row">
+      <div>
+        <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:8px">Evolução do Estado Emocional</div>
+        <canvas id="ch-emo-timeline" height="180" style="width:100%"></canvas>
+      </div>
+      <div>
+        <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:8px">Tags por Resultado</div>
+        <div id="emo-tag-compare">${buildTagCompare(done)}</div>
+      </div>
+    </div>
+
+    <!-- Insights -->
+    <div style="font-size:12px;font-weight:700;color:var(--text);text-transform:uppercase;letter-spacing:.06em;margin-bottom:10px">
+      ⚠️ Pontos de Melhoria &amp; Destaques
+    </div>
+    <div class="insights-list">
+      ${generateInsights(done).map(({ type, text }) =>
+        `<div class="insight-item ${type}">
+          <span>${type === 'warn' ? '⚠️' : type === 'ok' ? '✅' : type === 'tip' ? '💡' : 'ℹ️'}</span>
+          <span>${text}</span>
+        </div>`
+      ).join('')}
+    </div>
+  `;
+
+  drawScoreRing('emo-score-ring', avgScore);
+  drawEmoTimeline(done);
 }
 
 // ─── CONFIGURAÇÕES ─────────────────────────────────────────────────
